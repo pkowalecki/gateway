@@ -19,23 +19,18 @@ public class GatewayApplication {
     @Bean
     public RouteLocator routes(RouteLocatorBuilder builder) {
         return builder.routes()
-                .route("eureka-server", r ->
-                        r.path("/eureka/main")
+                .route("eureka-server", r -> r.path("/eureka/main")
                                 .filters(f -> f.setPath("/"))
                                 .uri("http://eureka-server:8761"))
                 .route("eureka-server-static", r ->
                         r.path("/eureka/**")
                                 .uri("http://eureka-server:8761"))
-                .route("diet-planner-web", r ->
-                        r.path("/app/**")
-                                .uri("http://diet-planner-web:8081"))
-                .route("diet-planner-web-static", r ->
-                        r.path("/static/**")
-                                .uri("http://diet-planner-web:8081"))
+                .route("auth-service", r -> r.path("/api/v1/auth/**")
+                        .uri("lb://authorization-server"))
                 .route("diet-planner-api", r ->
                         r.path("/api/v1/dpa/**")
+                                .filters(f -> f.stripPrefix(2))
                                 .uri("lb://diet-planner-api"))
-
                 .build();
 
     }
