@@ -1,9 +1,6 @@
 package pl.kowalecki.gateway.sercurity;
 
-import io.jsonwebtoken.ExpiredJwtException;
-import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.MalformedJwtException;
-import io.jsonwebtoken.UnsupportedJwtException;
+import io.jsonwebtoken.*;
 import io.jsonwebtoken.io.Decoders;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -12,6 +9,7 @@ import org.springframework.stereotype.Component;
 import io.jsonwebtoken.security.Keys;
 
 import java.security.Key;
+import java.util.function.Function;
 
 @Slf4j
 @Component
@@ -34,7 +32,33 @@ public class JwtUtil {
         }
     }
 
+    public Claims getClaims(String token) {
+        try {
+            return Jwts.parserBuilder()
+                    .setSigningKey(key())
+                    .build()
+                    .parseClaimsJws(token)
+                    .getBody();
+        } catch (Exception e) {
+            log.error("Failed to parse JWT: {}", e.getMessage());
+            throw new IllegalArgumentException("Invalid token", e);
+        }
+    }
+
     private Key key() {
         return Keys.hmacShaKeyFor(Decoders.BASE64.decode(jwtSecret));
+    }
+
+    public <T> T extractClaim(String token, Function<Claims, T> claimsResolver) {
+        Claims claims = getClaims(token);
+        return claimsResolver.apply(claims);
+    }
+
+    public String extractUserId(String token) {
+        return extractClaim(token, claims -> claims.get("userId", String.class));
+    }
+
+    public String extractEmail(String token) {
+        return extractClaim(token, Claims::getSubject);
     }
 }

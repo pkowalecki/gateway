@@ -28,7 +28,7 @@ public class GatewayApplication {
                 .route("auth-service", r -> r.path("/api/v1/auth/**")
                         .uri("lb://authorization-server"))
                 .route("diet-planner-api", r ->
-                        r.path("/api/v1/dpa/**")
+                        r.path("/api/v1/dpa/**").filters(f -> f.stripPrefix(3))
                                 .uri("lb://diet-planner-api"))
 
                 .build();

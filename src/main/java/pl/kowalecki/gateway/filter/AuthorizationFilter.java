@@ -1,5 +1,6 @@
 package pl.kowalecki.gateway.filter;
 
+import io.jsonwebtoken.Claims;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cloud.gateway.filter.GatewayFilter;
 import org.springframework.cloud.gateway.filter.factory.AbstractGatewayFilterFactory;
@@ -7,6 +8,7 @@ import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
+import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.server.ServerWebExchange;
@@ -33,48 +35,35 @@ public class AuthorizationFilter extends AbstractGatewayFilterFactory<Authorizat
     @Override
     public GatewayFilter apply(Config config) {
         return ((exchange, chain) -> {
-            if (validator.isSecured.test(exchange.getRequest())) {
-                if (!exchange.getRequest().getHeaders().containsKey(HttpHeaders.AUTHORIZATION)) {
-                    return unauthorizedResponse(exchange, "Authorization header is missing");
-                }
-
-                String authHeader = exchange.getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION);
-                if (authHeader != null && authHeader.startsWith("Bearer ")) {
-                    authHeader = authHeader.substring(7);
-                } else {
-                    return unauthorizedResponse(exchange, "Invalid Authorization header format");
-                }
-
-                try {
-                    jwtUtil.validateToken(authHeader);
-                } catch (Exception e) {
-                    String refreshToken = exchange.getRequest().getCookies().getFirst("refreshToken") != null
-                            ? exchange.getRequest().getCookies().getFirst("refreshToken").getValue()
-                            : null;
-                    if (refreshToken == null) {
-                        return unauthorizedResponse(exchange, "Refresh token is missing");
-                    }
-
-                    return getNewTokenFromAuthService(refreshToken)
-                            .flatMap(newAuthToken -> {
-                                exchange.getRequest().mutate().header(HttpHeaders.AUTHORIZATION, "Bearer " + newAuthToken);
-                                return chain.filter(exchange);
-                            })
-                            .onErrorResume(error -> unauthorizedResponse(exchange, "Unauthorized access - token refresh failed!"));
-                }
+            if (!validator.isSecured.test(exchange.getRequest())) {
+                return chain.filter(exchange);
             }
-            return chain.filter(exchange);
+            String authHeader = extractAuthHeader(exchange);
+            if (authHeader == null) {
+                return unauthorizedResponse(exchange, "Authorization header is missing or invalid");
+            }
+            try {
+                jwtUtil.validateToken(authHeader);
+                String userId = jwtUtil.extractUserId(authHeader);
+                String email = jwtUtil.extractEmail(authHeader);
+                ServerHttpRequest request = exchange.getRequest().mutate()
+                        .header("X-User-Id", userId)
+                        .header("X-User-Email", email)
+                        .build();
+
+                return chain.filter(exchange.mutate().request(request).build());
+            } catch (Exception e) {
+                return unauthorizedResponse(exchange, "Invalid or expired token");
+            }
         });
     }
 
-    private Mono<String> getNewTokenFromAuthService(String refreshToken) {
-        return webClientBuilder.build()
-                .post()
-                .uri("lb://authorization-server/api/v1/refresh")
-                .header(HttpHeaders.AUTHORIZATION, "Bearer " + refreshToken)
-                .retrieve()
-                .onStatus(HttpStatusCode::isError, response -> Mono.error(new RuntimeException("Failed to refresh token")))
-                .bodyToMono(String.class);
+    private String extractAuthHeader(ServerWebExchange exchange) {
+        String authHeader = exchange.getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION);
+        if (authHeader != null && authHeader.startsWith("Bearer ")) {
+            return authHeader.substring(7);
+        }
+        return null;
     }
 
     private Mono<Void> unauthorizedResponse(ServerWebExchange exchange, String message) {
