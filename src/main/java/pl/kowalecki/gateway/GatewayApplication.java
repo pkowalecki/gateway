@@ -7,6 +7,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.cloud.gateway.route.RouteLocator;
 import org.springframework.cloud.gateway.route.builder.RouteLocatorBuilder;
 import org.springframework.context.annotation.Bean;
+import pl.kowalecki.gateway.filter.AuthorizationFilter;
 
 @SpringBootApplication
 @OpenAPIDefinition(info = @Info(title = "API Gateway", version = "1.0", description = "Documentation API Gateway v1.0"))
@@ -17,7 +18,7 @@ public class GatewayApplication {
     }
 
     @Bean
-    public RouteLocator routes(RouteLocatorBuilder builder) {
+    public RouteLocator routes(RouteLocatorBuilder builder, AuthorizationFilter authorizationFilter) {
         return builder.routes()
                 .route("eureka-server", r -> r.path("/eureka/main")
                                 .filters(f -> f.setPath("/"))
@@ -28,9 +29,8 @@ public class GatewayApplication {
                 .route("auth-service", r -> r.path("/api/v1/auth/**")
                         .uri("lb://authorization-server"))
                 .route("diet-planner-api", r ->
-                        r.path("/api/v1/dpa/**").filters(f -> f.stripPrefix(3))
+                        r.path("/api/v1/dpa/**").filters(f -> f.stripPrefix(3).filter(authorizationFilter.apply(new AuthorizationFilter.Config())))
                                 .uri("lb://diet-planner-api"))
-
                 .build();
 
     }

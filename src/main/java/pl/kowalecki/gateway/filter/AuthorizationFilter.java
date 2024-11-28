@@ -1,6 +1,7 @@
 package pl.kowalecki.gateway.filter;
 
 import io.jsonwebtoken.Claims;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cloud.gateway.filter.GatewayFilter;
 import org.springframework.cloud.gateway.filter.factory.AbstractGatewayFilterFactory;
@@ -18,24 +19,26 @@ import org.springframework.http.HttpHeaders;
 import reactor.core.publisher.Mono;
 
 @Component
+@Slf4j
 public class AuthorizationFilter extends AbstractGatewayFilterFactory<AuthorizationFilter.Config> {
 
     private final RouteValidator validator;
     private final JwtUtil jwtUtil;
-    private final WebClient.Builder webClientBuilder;
 
     @Autowired
-    public AuthorizationFilter(RouteValidator validator, JwtUtil jwtUtil, WebClient.Builder webClientBuilder) {
+    public AuthorizationFilter(RouteValidator validator, JwtUtil jwtUtil) {
         super(Config.class);
         this.validator = validator;
         this.jwtUtil = jwtUtil;
-        this.webClientBuilder = webClientBuilder;
     }
 
     @Override
     public GatewayFilter apply(Config config) {
         return ((exchange, chain) -> {
             if (!validator.isSecured.test(exchange.getRequest())) {
+                log.info("---------------");
+                log.info("OPEN ROUTE: {}",  exchange.getRequest().getURI());
+                log.info("---------------");
                 return chain.filter(exchange);
             }
             String authHeader = extractAuthHeader(exchange);
@@ -50,7 +53,7 @@ public class AuthorizationFilter extends AbstractGatewayFilterFactory<Authorizat
                         .header("X-User-Id", userId)
                         .header("X-User-Email", email)
                         .build();
-
+                log.info("REQUEST {}",  request);
                 return chain.filter(exchange.mutate().request(request).build());
             } catch (Exception e) {
                 return unauthorizedResponse(exchange, "Invalid or expired token");
