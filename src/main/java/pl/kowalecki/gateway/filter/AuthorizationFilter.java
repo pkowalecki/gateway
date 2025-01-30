@@ -41,20 +41,27 @@ public class AuthorizationFilter extends AbstractGatewayFilterFactory<Authorizat
                 log.info("Open route accessed: {}", exchange.getRequest().getURI());
                 return chain.filter(exchange);
             }
+            log.info("Robie requa do: {}", exchange.getRequest().getURI());
+            log.info("headers: {}", exchange.getRequest().getHeaders().toString());
+            //todo access token bearer gdzieś się tworzy i przekazuje z danymi refreshtokenu
             String accessToken = extractJwt(exchange.getRequest());
             String refreshToken = extractRefreshToken(exchange.getRequest());
 
             try {
                 if (accessToken == null) {
+                    log.info("Access token is null");
                     if (refreshToken != null && validateRefreshToken(refreshToken)) {
+                        log.info("Refresh token is valid so i do requset");
                         return refreshAccessToken(exchange, refreshToken, chain);
                     }
                     return unauthorizedResponse(exchange, "Authorization header is missing or invalid");
                 }
 
                 if (jwtUtils.validateJwtToken(accessToken)) {
+                    //todo missing user id? Wywalamy
                     String userId = jwtUtils.extractUserId(accessToken);
                     String email = jwtUtils.extractEmail(accessToken);
+                    log.info("Adding headers: X-User-Id={}, X-User-Email={}", userId, email);
 
                     ServerHttpRequest request = exchange.getRequest().mutate()
                             .header("X-User-Id", userId)
@@ -64,6 +71,7 @@ public class AuthorizationFilter extends AbstractGatewayFilterFactory<Authorizat
                     return chain.filter(exchange.mutate().request(request).build());
                 }
                 if (refreshToken != null && validateRefreshToken(refreshToken)) {
+                    log.info("Refresh token is valid wiec odswiezam accesstoken");
                     return refreshAccessToken(exchange, refreshToken, chain);
                 }
 
@@ -97,7 +105,7 @@ public class AuthorizationFilter extends AbstractGatewayFilterFactory<Authorizat
 
     private Mono<Void> refreshAccessToken(ServerWebExchange exchange, String refreshToken, GatewayFilterChain chain) {
         WebClient webClient = webClientBuilder.baseUrl("http://authorization-server").build();
-
+        log.info("Wołam o odświeżenie ciasteczka!");
         return webClient.post()
                 .uri("/api/v1/auth/refresh")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + refreshToken)
@@ -105,12 +113,10 @@ public class AuthorizationFilter extends AbstractGatewayFilterFactory<Authorizat
                 .bodyToMono(Map.class)
                 .flatMap(tokens -> {
                     String newAccessToken = (String) tokens.get("accessToken");
-                    log.info("Successfully refreshed access token");
-
                     ServerHttpRequest request = exchange.getRequest().mutate()
                             .header(HttpHeaders.AUTHORIZATION, "Bearer " + newAccessToken)
                             .build();
-
+                    log.info("Successfully refreshed access token: {}", newAccessToken);
                     return chain.filter(exchange.mutate().request(request).build());
                 })
                 .onErrorResume(e -> unauthorizedResponse(exchange, "Failed to refresh token"));
@@ -120,6 +126,7 @@ public class AuthorizationFilter extends AbstractGatewayFilterFactory<Authorizat
         exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
         exchange.getResponse().getHeaders().setContentType(MediaType.APPLICATION_JSON);
         DataBuffer buffer = exchange.getResponse().bufferFactory().wrap(("{\"error\":\"" + message + "\"}").getBytes());
+        log.info("Unauthorized response: {}", buffer);
         return exchange.getResponse().writeWith(Mono.just(buffer));
     }
 
