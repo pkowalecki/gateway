@@ -11,25 +11,16 @@ import io.jsonwebtoken.security.Keys;
 import java.security.Key;
 import java.util.function.Function;
 
-@Slf4j
 @Component
-public class JwtUtil {
+@Slf4j
+public class JwtUtils {
 
-    @Value("${dietplanner.app.jwtSecret}")
+    @Value("${auth.jwt.secret}")
     private String jwtSecret;
 
-    public void validateToken(final String token) {
-        try {
-            Jwts.parserBuilder().setSigningKey(key()).build().parse(token);
-        } catch (MalformedJwtException e) {
-            log.error("Invalid JWT token: {}", e.getMessage());
-        } catch (ExpiredJwtException e) {
-            log.error("JWT token is expired: {}", e.getMessage());
-        } catch (UnsupportedJwtException e) {
-            log.error("JWT token is unsupported: {}", e.getMessage());
-        } catch (IllegalArgumentException e) {
-            log.error("JWT claims string is empty: {}", e.getMessage());
-        }
+
+    private Key key() {
+        return Keys.hmacShaKeyFor(Decoders.BASE64.decode(jwtSecret));
     }
 
     public Claims getClaims(String token) {
@@ -45,11 +36,7 @@ public class JwtUtil {
         }
     }
 
-    private Key key() {
-        return Keys.hmacShaKeyFor(Decoders.BASE64.decode(jwtSecret));
-    }
-
-    public <T> T extractClaim(String token, Function<Claims, T> claimsResolver) {
+    private <T> T extractClaim(String token, Function<Claims, T> claimsResolver) {
         Claims claims = getClaims(token);
         return claimsResolver.apply(claims);
     }
@@ -60,5 +47,22 @@ public class JwtUtil {
 
     public String extractEmail(String token) {
         return extractClaim(token, Claims::getSubject);
+    }
+
+
+    public boolean validateJwtToken(String authToken) {
+        try {
+            Jwts.parserBuilder().setSigningKey(key()).build().parse(authToken);
+            return true;
+        } catch (MalformedJwtException e) {
+            log.error("Invalid JWT token: {}", e.getMessage(), e);
+        } catch (ExpiredJwtException e) {
+            log.error("JWT token is expired: {}", e.getMessage(), e);
+        } catch (UnsupportedJwtException e) {
+            log.error("JWT token is unsupported: {}", e.getMessage(), e);
+        } catch (IllegalArgumentException e) {
+            log.error("JWT claims string is empty: {}", e.getMessage(), e);
+        }
+        return false;
     }
 }

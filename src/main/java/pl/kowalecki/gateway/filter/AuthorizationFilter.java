@@ -1,72 +1,119 @@
 package pl.kowalecki.gateway.filter;
 
-import io.jsonwebtoken.Claims;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cloud.gateway.filter.GatewayFilter;
+import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.cloud.gateway.filter.factory.AbstractGatewayFilterFactory;
 import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
 import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.server.ServerWebExchange;
-import pl.kowalecki.gateway.sercurity.JwtUtil;
-
+import pl.kowalecki.gateway.sercurity.JwtUtils;
 import org.springframework.http.HttpHeaders;
 import reactor.core.publisher.Mono;
+
+import java.util.Map;
 
 @Component
 @Slf4j
 public class AuthorizationFilter extends AbstractGatewayFilterFactory<AuthorizationFilter.Config> {
 
-    private final RouteValidator validator;
-    private final JwtUtil jwtUtil;
+    private final RouteValidator routeValidator;
+    private final JwtUtils jwtUtils;
+    private final WebClient.Builder webClientBuilder;
 
     @Autowired
-    public AuthorizationFilter(RouteValidator validator, JwtUtil jwtUtil) {
+    public AuthorizationFilter(RouteValidator routeValidator, JwtUtils jwtUtils, WebClient.Builder webClientBuilder) {
         super(Config.class);
-        this.validator = validator;
-        this.jwtUtil = jwtUtil;
+        this.routeValidator = routeValidator;
+        this.jwtUtils = jwtUtils;
+        this.webClientBuilder = webClientBuilder;
     }
 
     @Override
     public GatewayFilter apply(Config config) {
         return ((exchange, chain) -> {
-            if (!validator.isSecured.test(exchange.getRequest())) {
-                log.info("---------------");
-                log.info("OPEN ROUTE: {}",  exchange.getRequest().getURI());
-                log.info("---------------");
+            if (!routeValidator.isSecured.test(exchange.getRequest())) {
+                log.info("Open route accessed: {}", exchange.getRequest().getURI());
                 return chain.filter(exchange);
             }
-            String authHeader = extractAuthHeader(exchange);
-            if (authHeader == null) {
-                return unauthorizedResponse(exchange, "Authorization header is missing or invalid");
-            }
+            String accessToken = extractJwt(exchange.getRequest());
+            String refreshToken = extractRefreshToken(exchange.getRequest());
+
             try {
-                jwtUtil.validateToken(authHeader);
-                String userId = jwtUtil.extractUserId(authHeader);
-                String email = jwtUtil.extractEmail(authHeader);
-                ServerHttpRequest request = exchange.getRequest().mutate()
-                        .header("X-User-Id", userId)
-                        .header("X-User-Email", email)
-                        .build();
-                log.info("REQUEST {}",  request);
-                return chain.filter(exchange.mutate().request(request).build());
+                if (accessToken == null) {
+                    if (refreshToken != null && validateRefreshToken(refreshToken)) {
+                        return refreshAccessToken(exchange, refreshToken, chain);
+                    }
+                    return unauthorizedResponse(exchange, "Authorization header is missing or invalid");
+                }
+
+                if (jwtUtils.validateJwtToken(accessToken)) {
+                    String userId = jwtUtils.extractUserId(accessToken);
+                    String email = jwtUtils.extractEmail(accessToken);
+
+                    ServerHttpRequest request = exchange.getRequest().mutate()
+                            .header("X-User-Id", userId)
+                            .header("X-User-Email", email)
+                            .build();
+
+                    return chain.filter(exchange.mutate().request(request).build());
+                }
+                if (refreshToken != null && validateRefreshToken(refreshToken)) {
+                    return refreshAccessToken(exchange, refreshToken, chain);
+                }
+
+                return unauthorizedResponse(exchange, "Authorization header is missing or invalid");
             } catch (Exception e) {
-                return unauthorizedResponse(exchange, "Invalid or expired token");
+                log.error("Authorization failed: {}", e.getMessage());
+                return unauthorizedResponse(exchange, "Authorization failed");
             }
         });
     }
 
-    private String extractAuthHeader(ServerWebExchange exchange) {
-        String authHeader = exchange.getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION);
-        if (authHeader != null && authHeader.startsWith("Bearer ")) {
-            return authHeader.substring(7);
+    private String extractJwt(ServerHttpRequest request) {
+        String authHeader = request.getHeaders().getFirst(HttpHeaders.AUTHORIZATION);
+        return (authHeader != null && authHeader.startsWith("Bearer ")) ? authHeader.substring(7) : null;
+    }
+
+    private String extractRefreshToken(ServerHttpRequest request) {
+        String refreshTokenHeader = request.getHeaders().getFirst("X-Refresh-Token");
+        return refreshTokenHeader != null ? refreshTokenHeader : null;
+    }
+
+    private boolean validateRefreshToken(String refreshToken) {
+        try {
+            jwtUtils.validateJwtToken(refreshToken);
+            return true;
+        } catch (Exception e) {
+            log.error("Invalid refresh token: {}", e.getMessage());
+            return false;
         }
-        return null;
+    }
+
+    private Mono<Void> refreshAccessToken(ServerWebExchange exchange, String refreshToken, GatewayFilterChain chain) {
+        WebClient webClient = webClientBuilder.baseUrl("http://authorization-server").build();
+
+        return webClient.post()
+                .uri("/api/v1/auth/refresh")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + refreshToken)
+                .retrieve()
+                .bodyToMono(Map.class)
+                .flatMap(tokens -> {
+                    String newAccessToken = (String) tokens.get("accessToken");
+                    log.info("Successfully refreshed access token");
+
+                    ServerHttpRequest request = exchange.getRequest().mutate()
+                            .header(HttpHeaders.AUTHORIZATION, "Bearer " + newAccessToken)
+                            .build();
+
+                    return chain.filter(exchange.mutate().request(request).build());
+                })
+                .onErrorResume(e -> unauthorizedResponse(exchange, "Failed to refresh token"));
     }
 
     private Mono<Void> unauthorizedResponse(ServerWebExchange exchange, String message) {
