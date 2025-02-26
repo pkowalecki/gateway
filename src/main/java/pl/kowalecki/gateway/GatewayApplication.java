@@ -27,7 +27,7 @@ public class GatewayApplication {
                         r.path("/eureka/**")
                                 .uri("http://eureka-server:8761"))
                 .route("auth-service", r ->
-                        r.path("/api/v1/auth/**").filters(f -> f.filter(authorizationFilter.apply(new AuthorizationFilter.Config())))
+                        r.path("/api/v1/auth/**").filters(f -> f.stripPrefix(3).filter(authorizationFilter.apply(new AuthorizationFilter.Config())))
                                 .uri("lb://authorization-server"))
                 .route("diet-planner-api", r ->
                         r.path("/api/v1/dpa/**").filters(f -> f.stripPrefix(3).filter(authorizationFilter.apply(new AuthorizationFilter.Config())))
