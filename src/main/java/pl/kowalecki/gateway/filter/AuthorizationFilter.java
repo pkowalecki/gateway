@@ -79,7 +79,7 @@ public class AuthorizationFilter extends AbstractGatewayFilterFactory<Authorizat
     private Mono<Void> refreshAccessToken(ServerWebExchange exchange, String refreshToken, GatewayFilterChain chain) {
         WebClient webClient = webClientBuilder.baseUrl("http://authorization-server").build();
         return webClient.post()
-                .uri("/api/v1/auth/refresh")
+                .uri("/public/refresh")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + refreshToken)
                 .retrieve()
                 .bodyToMono(Map.class)
